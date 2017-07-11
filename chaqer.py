@@ -2,13 +2,13 @@ import httplib, urllib, base64
 import os
 import sys
 import json
-import ast
+import time
 
 class Chaqer:
 
     def __init__(self):
-        self.KEY = str(os.environ.get('SUBSCRIPTION_KEY'))
-        self.REGION = str(os.environ.get('AZURE_REGION'))
+        self.KEY =str(os.environ.get('SUBSCRIPTION_KEY', ""))
+        self.REGION = str(os.environ.get('AZURE_REGION', ""))
         self.CONN_CODE = self.REGION + '.api.cognitive.microsoft.com'
         self.NameID = {}
 
@@ -16,6 +16,10 @@ class Chaqer:
             'Content-Type': 'application/json',
             'Ocp-Apim-Subscription-Key': self.KEY,
         }
+
+        if self.KEY == "" or self.REGION == "":
+            print "Must have SUBSCRIPTION_KEY and AZURE_REGION set"
+            sys.exit()
 
     def deleteGroup(self,groupID):
         params = urllib.urlencode({
@@ -111,7 +115,7 @@ class Chaqer:
                 return
             print '\n\n\nSuccessfully created ' + str(personName)
             print data
-            data = ast.literal_eval(data)
+            data = json.loads(data)
             ID = data['personId']
             ID = str(ID)
             fileName = '/tmp/' + groupID.lower() + '.txt'
@@ -168,7 +172,7 @@ class Chaqer:
             if 'NotFound' in data:
                 print data
                 return
-            data = ast.literal_eval(data)
+            data = json.loads(data)
             if 'error' not in data.keys():
                 print 'Succesfully added face to ' + personName
                 flag = 1
@@ -189,7 +193,7 @@ class Chaqer:
                     if 'NotFound' in data:
                         print '\n\n\n' + data
                         return
-                    data = ast.literal_eval(data)
+                    data = json.loads(data)
                     if 'error' not in data.keys():
                         print '\n\n\nSuccesfully added face to ' + personName
                         flag = 1
@@ -210,7 +214,7 @@ class Chaqer:
                         if 'NotFound' in data:
                             print '\n\n\n' + data
                             return
-                        data = ast.literal_eval(data)
+                        data = json.loads(data)
 
                         if 'error' in data.keys():
                             print '\n\n\nCould not find face in ' + filePath
@@ -264,7 +268,7 @@ class Chaqer:
             data = response.read()
 
             if 'error' not in data:
-                data = ast.literal_eval(data)
+                data = json.loads(data)
                 return ([d['faceId'] for d in data])
 
             elif True:
@@ -279,7 +283,8 @@ class Chaqer:
                 response = conn.getresponse()
                 data = response.read()
                 if 'error' not in data:
-                    data = ast.literal_eval(data)
+                    data = json.loads(data)
+
                     return ([d['faceId'] for d in data])
 
             return 'exit'
@@ -324,7 +329,7 @@ class Chaqer:
                     print '\n\n\n' + data
                     return
                 conn.close()
-                data = ast.literal_eval(data)
+                data = json.loads(data)
             except Exception as e:
                 print("[Errno {0}] {1}".format(e.errno, e.strerror))
 
@@ -372,30 +377,44 @@ class Chaqer:
     def identifyFacesS3(self,groupID,image):
         result = {}
         finalResult = []
-        params = urllib.urlencode({
-        })
+        params = urllib.urlencode({})
         faceID = Chaqer().detectFaces(image)
         if len(faceID) == 0:
             return 0
         else:
             faceID = str(faceID)
             body = "{'personGroupId':'%s','faceIds':%s,'maxNumOfCandidatesReturned':1,'confidenceThreshold':0.6}" %(groupID,faceID)
+
             try:
                 conn = httplib.HTTPSConnection(self.CONN_CODE)
                 conn.request("POST", "/face/v1.0/identify?%s" % params, body, self.headers)
                 response = conn.getresponse()
                 data = response.read()
                 conn.close()
-                data = ast.literal_eval(data)
+                data = json.loads(data)
+
+                if not isinstance(data, (list, tuple)) == True:
+                    if data["error"]:
+                        print data["error"]["message"]
+                        print data["error"]["code"]
+
+                        if data["error"]["code"] == "RateLimitExceeded":
+                            time.sleep(5)
+                            self.identifyFacesS3(groupID,image)
+                        else:
+                            raise Exception('unkown error! ' + data["error"]["code"] + " : " + data["error"]["message"] + " for " + image)
+
+                for i in range(0,len(data)):
+                    if len(data[i]["candidates"]) != 0:
+                        name = Chaqer().getPerson("chaqer",data[i]["candidates"][0]["personId"])
+                        confidence = data[i]["candidates"][0]["confidence"]
+                        result["Name"] = name
+                        result["Confidence"] = confidence
+                        finalResult.append(result)
+
             except Exception as e:
-                print("[Errno {0}] {1}".format(e.errno, e.strerror))
-            for i in range(0,len(data)):
-                if len(data[i]["candidates"]) != 0:
-                    name = Chaqer().getPerson("chaqer",data[i]["candidates"][0]["personId"])
-                    confidence = data[i]["candidates"][0]["confidence"]
-                    result["Name"] = name
-                    result["Confidence"] = confidence
-                    finalResult.append(result)
+                print e
+
             return finalResult
 
     def getPerson(self,groupID,personID):
