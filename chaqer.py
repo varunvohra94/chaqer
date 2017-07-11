@@ -41,8 +41,6 @@ class Chaqer:
 
 
 
-
-
     def listGroups(self):
         params = urllib.urlencode({
         })
